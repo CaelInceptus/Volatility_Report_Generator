@@ -129,21 +129,45 @@ class VolatilityRunner:
             return val
         return str(val)
 
-    def _run_plugin_class(self, plugin_class) -> List[Dict]:
-        from volatility3.framework import contexts, automagic
-        from volatility3 import plugins as vol_plugins
+    @staticmethod
+    def _get_construct_plugin():
+        """Resolve construct_plugin across Volatility3 versions."""
+        # v2.x standard location
+        try:
+            from volatility3 import plugins as _p
+            if hasattr(_p, 'construct_plugin'):
+                return _p.construct_plugin
+        except ImportError:
+            pass
+        # Alternative framework location
+        try:
+            from volatility3.framework import plugins as _fp
+            if hasattr(_fp, 'construct_plugin'):
+                return _fp.construct_plugin
+        except ImportError:
+            pass
+        # Manual fallback: replicate what construct_plugin does
+        from volatility3.framework import automagic as _am, constants as _c
+        def _construct(context, automagics, plugin, base_config_path, progress_callback, open_method):
+            _am.run(automagics, context, plugin, base_config_path, progress_callback=progress_callback)
+            config_path = base_config_path + _c.BANG + plugin.__name__
+            return plugin(context, config_path, progress_callback=progress_callback)
+        return _construct
 
-        # Try to suppress output from Volatility3
+    def _run_plugin_class(self, plugin_class) -> List[Dict]:
+        from volatility3.framework import automagic
+
         try:
             from volatility3.cli import MuteProgress
             progress = MuteProgress()
         except ImportError:
             progress = None
 
+        construct_plugin = self._get_construct_plugin()
         ctx = self._context.clone()
         available_automagics = automagic.available(ctx)
         plugin_automagics = automagic.choose_automagic(available_automagics, plugin_class)
-        constructed = vol_plugins.construct_plugin(
+        constructed = construct_plugin(
             ctx, plugin_automagics, plugin_class, "plugins", progress, None
         )
         treegrid = constructed.run()
